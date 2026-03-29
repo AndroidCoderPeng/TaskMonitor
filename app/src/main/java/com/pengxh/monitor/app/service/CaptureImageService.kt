@@ -12,8 +12,8 @@ import android.os.IBinder
 import android.os.RemoteCallbackList
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import androidx.core.graphics.createBitmap
-import com.pengxh.kt.lite.extensions.createImageFileDir
 import com.pengxh.kt.lite.extensions.saveImage
 import com.pengxh.monitor.app.ICaptureCallback
 import com.pengxh.monitor.app.ICaptureService
@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,7 +63,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
             if (cb != null) callbacks.unregister(cb)
         }
 
-        override fun getLatestCapturePath(): String? = latestPath.get()
+        override fun getLatestCaptureUri(): String? = latestPath.get()
 
         override fun getLatestCaptureWallTimeMs(): Long = latestWallTime.get()
     }
@@ -103,10 +104,11 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
 
                 if (ProjectionSession.state == ProjectionSession.State.ACTIVE && ProjectionSession.getProjection() != null) {
                     runCatching {
-                        val path = captureOnce()
-                        latestPath.set(path)
+                        val uriString = captureOnce()
+                        latestPath.set(uriString)
                         latestWallTime.set(System.currentTimeMillis())
-                        notifySuccess(path, System.currentTimeMillis())
+
+                        notifySuccess(uriString, System.currentTimeMillis())
                     }.onFailure { e ->
                         Log.e(kTag, "capture failed", e)
                         notifyError(EVENT_CAPTURE_EXCEPTION, e.message ?: "截图失败", now)
@@ -131,11 +133,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
         val height = metrics.heightPixels
         val densityDpi = metrics.densityDpi
 
-        Log.d(kTag, "captureOnce: width=$width, height=$height, dpi=$densityDpi")
-        val imagePath = "${createImageFileDir()}/${dateTimeFormat.format(Date())}.png"
-
         val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1)
-
         val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
 
@@ -151,62 +149,66 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                 null,
                 null
             )
+
             //必须延迟一下，因为生出图片需要时间缓冲，不能秒得
             delay(1000)
-            withContext(Dispatchers.IO) {
-                val image = imageReader.acquireNextImage()
-                if (image == null) {
-                    Log.e(kTag, "acquireLatestImage returned null")
-                    notifyError(EVENT_CAPTURE_IMAGE_NULL, "截图失败", System.currentTimeMillis())
-                    return@withContext
-                }
-                val width = image.width
-                val height = image.height
-                val planes = image.planes
-                val buffer = planes[0].buffer
-                val pixelStride = planes[0].pixelStride
-                val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * width
-                val bitmap = createBitmap(width + rowPadding / pixelStride, height)
-                bitmap.copyPixelsFromBuffer(buffer)
 
-                image.close()
-
-                try {
-                    virtualDisplay?.release()
-                } catch (t: Throwable) {
-                    t.printStackTrace()
-                }
-
-                try {
-                    imageReader.close()
-                } catch (t: Throwable) {
-                    t.printStackTrace()
-                }
-
-                Log.d(kTag, "startCaptureScreen: 完成截屏")
-                bitmap.saveImage(imagePath)
+            val image = imageReader.acquireNextImage()
+            if (image == null) {
+                Log.e(kTag, "acquireLatestImage returned null")
+                notifyError(EVENT_CAPTURE_IMAGE_NULL, "截图失败", System.currentTimeMillis())
+                return@withContext ""
             }
+
+            val width = image.width
+            val height = image.height
+            val planes = image.planes
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * width
+
+            val bitmap = createBitmap(width + rowPadding / pixelStride, height)
+            bitmap.copyPixelsFromBuffer(buffer)
+            image.close()
+
+            val cropped = if (rowPadding != 0) {
+                android.graphics.Bitmap.createBitmap(bitmap, 0, 0, width, height)
+            } else bitmap
+
+            val dir = File(cacheDir, "capture").apply { if (!exists()) mkdirs() }
+            val outFile = File(dir, "${dateTimeFormat.format(Date())}.png")
+            val imagePath = outFile.absolutePath
+            Log.d(kTag, "完成截屏: $imagePath")
+
+            // 写入 outFile
+            cropped.saveImage(imagePath)
+
+            // 生成 content:// Uri
+            val uri = FileProvider.getUriForFile(
+                this@CaptureImageService,
+                "com.pengxh.monitor.app.fileprovider",
+                outFile
+            )
+
+            // 授权给 DailyTask
+            grantUriPermission(
+                "com.pengxh.daily.app",
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+
+            return@withContext uri.toString()
         } finally {
-            try {
-                virtualDisplay?.release()
-            } catch (t: Throwable) {
-                t.printStackTrace()
-            }
-
-            try {
-                imageReader.close()
-            } catch (t: Throwable) {
-                t.printStackTrace()
-            }
+            runCatching { virtualDisplay?.release() }
+            runCatching { imageReader.close() }
         }
-        imagePath
     }
 
-    private fun notifySuccess(path: String, wallTimeMs: Long) {
+    private fun notifySuccess(uri: String, wallTimeMs: Long) {
         val n = callbacks.beginBroadcast()
         for (i in 0 until n) {
-            runCatching { callbacks.getBroadcastItem(i).onCaptureSuccess(path, wallTimeMs) }
+            runCatching { callbacks.getBroadcastItem(i).onCaptureSuccess(uri, wallTimeMs) }
         }
         callbacks.finishBroadcast()
     }

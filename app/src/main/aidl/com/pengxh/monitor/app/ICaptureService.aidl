@@ -8,7 +8,7 @@ interface ICaptureService {
 
     void unregisterCallback(ICaptureCallback cb);
 
-    String getLatestCapturePath();
+    String getLatestCaptureUri();
 
     long getLatestCaptureWallTimeMs();
 }
