@@ -166,7 +166,7 @@ class ForegroundRunningService : Service(), CoroutineScope by MainScope() {
             createMediaProjection(resultCode, data)
         } else {
             Log.w(kTag, "No valid projection data, service running without MediaProjection")
-            notifyPeer(NOTIFICATION_CODE_NEED_AUTH, "屏幕投屏未授权，请重新授权")
+            notifyPeer(NOTIFICATION_CODE_NEED_AUTH, "屏幕截屏未授权，请重新授权")
         }
 
         return START_STICKY
@@ -177,7 +177,7 @@ class ForegroundRunningService : Service(), CoroutineScope by MainScope() {
             val projection = mgr.getMediaProjection(resultCode, data)
             if (projection == null) {
                 Log.e(kTag, "Failed to create MediaProjection")
-                notifyPeer(NOTIFICATION_CODE_CAPTURE_FAILED, "MediaProjection 创建失败")
+                notifyPeer(NOTIFICATION_CODE_CAPTURE_FAILED, "截屏API初始化失败")
                 return
             }
 
@@ -186,7 +186,7 @@ class ForegroundRunningService : Service(), CoroutineScope by MainScope() {
                     super.onStop()
                     Log.d(kTag, "MediaProjection stopped")
                     ProjectionSession.markStoppedNeedAuth()
-                    notifyPeer(NOTIFICATION_CODE_NEED_AUTH, "投屏会话已中断，需要重新授权")
+                    notifyPeer(NOTIFICATION_CODE_NEED_AUTH, "截屏会话已中断，需要重新授权")
                 }
             }, null)
 
@@ -199,7 +199,7 @@ class ForegroundRunningService : Service(), CoroutineScope by MainScope() {
             }
         } catch (e: Exception) {
             Log.e(kTag, "Error creating MediaProjection", e)
-            notifyPeer(NOTIFICATION_CODE_CAPTURE_FAILED, "屏幕投屏失败: ${e.message}")
+            notifyPeer(NOTIFICATION_CODE_CAPTURE_FAILED, "截屏失败: ${e.message}")
         }
     }
 

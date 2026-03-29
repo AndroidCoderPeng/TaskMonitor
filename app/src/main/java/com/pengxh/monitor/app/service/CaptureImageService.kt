@@ -18,7 +18,6 @@ import com.pengxh.kt.lite.extensions.saveImage
 import com.pengxh.monitor.app.ICaptureCallback
 import com.pengxh.monitor.app.ICaptureService
 import com.pengxh.monitor.app.R
-import com.pengxh.monitor.app.utils.GuardEventReporter
 import com.pengxh.monitor.app.utils.ProjectionSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -110,27 +109,15 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                         notifySuccess(path, System.currentTimeMillis())
                     }.onFailure { e ->
                         Log.e(kTag, "capture failed", e)
-                        reportFailure(
-                            EVENT_CAPTURE_EXCEPTION,
-                            e.message ?: "capture failed",
-                            now
-                        )
+                        notifyError(EVENT_CAPTURE_EXCEPTION, e.message ?: "截图失败", now)
                     }
                 } else {
                     Log.w(kTag, "MediaProjection not active, skipping capture")
-                    reportFailure(EVENT_CAPTURE_NOT_ACTIVE, "MediaProjection not active", now)
+                    notifyError(EVENT_CAPTURE_NOT_ACTIVE, "截图服务未启动", now)
                 }
                 delay(captureInterval)
             }
         }
-    }
-
-    private fun reportFailure(code: Int, msg: String, wallTimeMs: Long) {
-        // 1) Capture 通道（专门给截图业务）
-        notifyError(code, msg, wallTimeMs)
-
-        // 2) Guard 通道（统一告警通道）
-        GuardEventReporter.notify(code, msg)
     }
 
     private suspend fun captureOnce(): String = withContext(Dispatchers.IO) {
@@ -170,11 +157,7 @@ class CaptureImageService : Service(), CoroutineScope by MainScope() {
                 val image = imageReader.acquireNextImage()
                 if (image == null) {
                     Log.e(kTag, "acquireLatestImage returned null")
-                    reportFailure(
-                        EVENT_CAPTURE_IMAGE_NULL,
-                        "acquireLatestImage returned null",
-                        System.currentTimeMillis()
-                    )
+                    notifyError(EVENT_CAPTURE_IMAGE_NULL, "截图失败", System.currentTimeMillis())
                     return@withContext
                 }
                 val width = image.width
